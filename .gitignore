@@ -7,3 +7,5 @@ build/
 WhisperFlow.app/
 ~/Library/Application Support/WhisperFlow/
 .DS_Store
+.claude
+BUILD.md
