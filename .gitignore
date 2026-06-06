@@ -1,0 +1,9 @@
+.env
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+build/
+WhisperFlow.app/
+~/Library/Application Support/WhisperFlow/
+.DS_Store
