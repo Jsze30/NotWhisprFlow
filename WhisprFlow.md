@@ -1,3 +1,8 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
 # Build Your Own WhisprFlow
 
 A from-scratch recipe for building a native macOS push-to-talk dictation app.
