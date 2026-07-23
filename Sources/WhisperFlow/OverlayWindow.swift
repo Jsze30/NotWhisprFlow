@@ -12,9 +12,26 @@ final class OverlayWindow {
     static let expandedSize = CGSize(width: 88, height: 30)
     static let idleSize = CGSize(width: 32, height: 6)
     private static let bottomOffset: CGFloat = 10
+    /// How long the small pill rises before it starts expanding, so the growth happens
+    /// after it has cleared the bottom edge rather than while still hidden below it.
+    private static let expandDelay: TimeInterval = 0.09
 
     private var panel: NSPanel?
     private var indicator: IndicatorView?
+
+    /// When true, the pill is parked off-screen below the bottom edge while idle and
+    /// only rises into view (sliding up + expanding) while dictating.
+    private var hideWhenIdle = false
+    /// Whether the panel is currently up in view (at its resting spot) vs parked below.
+    private var panelVisible = false
+    /// Whether the most recent state was idle — a hide-mode toggle uses this to decide
+    /// whether to re-present now or wait until dictation ends.
+    private var lastStateWasIdle = true
+    /// The first show snaps into place without a slide (nothing should move on launch).
+    private var hasPresented = false
+    /// Bumped on every present() so a stale slide completion can't hide a panel that
+    /// has since been shown again.
+    private var slideToken = 0
 
     func show(state: OverlayState) {
         DispatchQueue.main.async { self.present(state: state) }
@@ -29,21 +46,102 @@ final class OverlayWindow {
         DispatchQueue.main.async { self.indicator?.updateLevel(level) }
     }
 
+    /// Turn hide mode on/off. When idle, the change animates immediately: turning it on
+    /// slides the pill down off the bottom edge; turning it off slides it back up and
+    /// settles it as the idle dot. While dictating, it takes effect the next time the
+    /// pill returns to idle.
+    func setHideWhenIdle(_ value: Bool) {
+        DispatchQueue.main.async {
+            guard self.hideWhenIdle != value else { return }
+            self.hideWhenIdle = value
+            if self.lastStateWasIdle { self.present(state: .idle) }
+        }
+    }
+
+    private func restingOrigin(size: CGSize, screen: NSScreen) -> NSPoint {
+        NSPoint(x: screen.frame.midX - size.width / 2,
+                y: screen.frame.minY + Self.bottomOffset)
+    }
+
+    private func hiddenOrigin(size: CGSize, screen: NSScreen) -> NSPoint {
+        // Fully below the bottom edge so nothing (not even the shadow) peeks through.
+        NSPoint(x: screen.frame.midX - size.width / 2,
+                y: screen.frame.minY - size.height)
+    }
+
     private func present(state: OverlayState) {
         if panel == nil { build() }
-        guard let panel, let indicator else { return }
+        guard let panel, let indicator, let screen = NSScreen.main else { return }
 
-        indicator.setState(state)
+        let size = panel.frame.size
+        let resting = restingOrigin(size: size, screen: screen)
+        let hidden = hiddenOrigin(size: size, screen: screen)
+        let isIdle: Bool = { if case .idle = state { return true } else { return false } }()
+        lastStateWasIdle = isIdle
 
-        if let screen = NSScreen.main {
-            let size = panel.frame.size
-            let origin = NSPoint(
-                x: screen.frame.midX - size.width / 2,
-                y: screen.frame.minY + Self.bottomOffset
-            )
-            panel.setFrameOrigin(origin)
+        // The pill belongs on screen for any active state, and for idle only when hide
+        // mode is off. Idle + hide mode is the one case it should be parked below.
+        let wantVisible = !isIdle || !hideWhenIdle
+
+        // Any new presentation supersedes a pending slide's completion (prevents a stale
+        // "sink down" from hiding a panel that Fn has just brought back up).
+        slideToken += 1
+        let token = slideToken
+
+        // First show ever just snaps into place — nothing should slide on launch.
+        if !hasPresented {
+            hasPresented = true
+            indicator.setState(wantVisible ? state : .idle)
+            panel.setFrameOrigin(wantVisible ? resting : hidden)
+            if wantVisible { panel.orderFrontRegardless() } else { panel.orderOut(nil) }
+            panelVisible = wantVisible
+            return
         }
-        panel.orderFrontRegardless()
+
+        if wantVisible {
+            if panelVisible {
+                // Already up — the pill just resizes in place.
+                indicator.setState(state)
+            } else {
+                // Emerge from the bottom as the small idle pill, then expand into the
+                // active shape once it has cleared the edge — so the growth is visible.
+                indicator.setState(.idle)
+                panel.setFrameOrigin(hidden)
+                panel.orderFrontRegardless()
+                slide(panel, size: size, to: resting, completion: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.expandDelay) { [weak self] in
+                    guard let self, self.slideToken == token else { return }
+                    self.indicator?.setState(state)
+                }
+            }
+            panelVisible = true
+        } else {
+            if panelVisible {
+                // Mirror of the entrance: collapse toward the small pill *while* it sinks
+                // (rather than fully collapsing first), then park it out of sight.
+                indicator.setState(.idle)
+                slide(panel, size: size, to: hidden) { [weak self] in
+                    guard let self, self.slideToken == token else { return }
+                    panel.orderOut(nil)
+                }
+            } else {
+                // Already parked below.
+                indicator.setState(.idle)
+                panel.setFrameOrigin(hidden)
+                panel.orderOut(nil)
+            }
+            panelVisible = false
+        }
+    }
+
+    private func slide(_ panel: NSPanel, size: CGSize, to origin: NSPoint, completion: (() -> Void)?) {
+        // Animate the window's *frame* (its animatable property) — animating
+        // setFrameOrigin alone does not tween, it jumps.
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(CGRect(origin: origin, size: size), display: true)
+        }, completionHandler: completion)
     }
 
     private func build() {
@@ -120,7 +218,9 @@ private final class IndicatorView: NSView {
         layoutPill(size: currentPillSize, animated: false)
     }
 
-    func setState(_ state: OverlayState) {
+    /// `completion` fires once the pill has finished resizing to `state` (or immediately
+    /// if a newer state superseded this one). Used to chain the collapse → slide-down.
+    func setState(_ state: OverlayState, completion: (() -> Void)? = nil) {
         transitionID += 1
         let currentTransitionID = transitionID
 
@@ -159,8 +259,9 @@ private final class IndicatorView: NSView {
         currentPillSize = target
         applyLevels(animated: false)
         layoutPill(size: target, animated: true) { [weak self] in
-            guard let self, self.transitionID == currentTransitionID else { return }
+            guard let self, self.transitionID == currentTransitionID else { completion?(); return }
             revealIndicators()
+            completion?()
         }
     }
 
@@ -172,13 +273,22 @@ private final class IndicatorView: NSView {
     }
 
     private func hideAllIndicators() {
+        // Disable implicit actions so `isHidden` snaps off instantly. Otherwise the dots
+        // fade out over the default ~0.25s while `removeAllAnimations()` has just snapped
+        // their opacity back to full — which reads as a flicker as the pill collapses.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         barLayers.forEach { $0.isHidden = true }
         dotLayers.forEach { $0.isHidden = true }
         errorLayer?.isHidden = true
+        CATransaction.commit()
     }
 
     private func stopAnimations() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         (barLayers + dotLayers).forEach { $0.removeAllAnimations() }
+        CATransaction.commit()
     }
 
     private func layoutPill(size: CGSize, animated: Bool, completion: (() -> Void)? = nil) {

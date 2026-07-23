@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pipeline: TranscriptionPipeline!
     private var dictionaryWindow: NSWindow?
     private var dictionaryController: DictionaryPanelController?
+    private var hideModeItem: NSMenuItem?
     private var isRecording = false
     private let clicks: ClickPlayer? = {
         let bundled = Bundle.main.url(forResource: "click", withExtension: "mp3")
@@ -44,8 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.clicks?.playRelease()
             self?.stopRecording()
         }
+        hotkey.onToggleHide = { [weak self] in self?.toggleHideMode() }
         hotkey.start()
 
+        overlay.setHideWhenIdle(Config.shared.data.hideMode)
         overlay.show(state: .idle)
     }
 
@@ -74,6 +77,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dictionaryItem = NSMenuItem(title: "Dictionary", action: #selector(openDictionaryPanel), keyEquivalent: "")
         dictionaryItem.target = self
         menu.addItem(dictionaryItem)
+
+        let hideItem = NSMenuItem(title: "Hide Mode", action: #selector(toggleHideMode), keyEquivalent: "")
+        hideItem.target = self
+        hideItem.state = Config.shared.data.hideMode ? .on : .off
+        menu.addItem(hideItem)
+        hideModeItem = hideItem
 
         menu.addItem(.separator())
 
@@ -170,6 +179,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    @objc private func toggleHideMode() {
+        var newData = Config.shared.data
+        newData.hideMode.toggle()
+        Config.shared.save(newData)
+        overlay.setHideWhenIdle(newData.hideMode)
+        hideModeItem?.state = newData.hideMode ? .on : .off
+        NSLog("[WhisperFlow] hide mode %@", newData.hideMode ? "ON" : "OFF")
     }
 
     @objc private func quit() { NSApp.terminate(nil) }

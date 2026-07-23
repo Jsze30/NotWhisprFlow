@@ -13,6 +13,7 @@ struct ConfigData: Codable {
     var transcriptionModel: String = "gpt-4o-transcribe"
     var cleanupModel: String = "gpt-4o-mini"
     var enableCleanup: Bool = true
+    var hideMode: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case apiKey
@@ -22,6 +23,7 @@ struct ConfigData: Codable {
         case transcriptionModel
         case cleanupModel
         case enableCleanup
+        case hideMode
     }
 
     init() {}
@@ -35,6 +37,7 @@ struct ConfigData: Codable {
         transcriptionModel = try c.decodeIfPresent(String.self, forKey: .transcriptionModel) ?? "gpt-4o-transcribe"
         cleanupModel = try c.decodeIfPresent(String.self, forKey: .cleanupModel) ?? "gpt-4o-mini"
         enableCleanup = try c.decodeIfPresent(Bool.self, forKey: .enableCleanup) ?? true
+        hideMode = try c.decodeIfPresent(Bool.self, forKey: .hideMode) ?? false
     }
 }
 
