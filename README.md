@@ -22,6 +22,8 @@ Requires Xcode command-line tools and macOS 13+.
 
 - **Hold Fn** to record. An overlay appears.
 - **Release** to transcribe + auto-paste into whatever app is focused.
+- End your dictation with **"press enter"** to omit those words and press Enter after pasting (for example, "See you soon. Press enter.").
+  Saying just "press enter" presses Enter without pasting text.
 - Filler words are stripped; spoken commands like "new paragraph", "comma", "question mark" are applied.
 - **Hide mode:** by default the pill sits at the bottom of the screen. Toggle **Hide Mode** from the menu bar icon, or **double-tap the right Command key**, to hide it - then the pill only rises up from the bottom edge while you hold Fn and slides back down when you release. The setting persists across launches.
 

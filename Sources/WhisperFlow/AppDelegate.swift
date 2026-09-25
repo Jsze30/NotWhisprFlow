@@ -159,11 +159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[WhisperFlow] 📡 sending %d bytes to OpenAI", wavData.count)
             Task {
                 do {
-                    let text = try await self.pipeline.process(wav: wavData)
-                    NSLog("[WhisperFlow] ✅ transcript: %@", text)
+                    let result = try await self.pipeline.process(wav: wavData)
+                    NSLog("[WhisperFlow] ✅ transcript: %@", result.text)
                     await MainActor.run {
                         self.overlay.hide()
-                        if !text.isEmpty { Paster.paste(text) }
+                        Paster.paste(result.text, pressEnter: result.pressEnter)
                     }
                 } catch PipelineError.empty {
                     NSLog("[WhisperFlow] ⚠️ no speech transcribed")

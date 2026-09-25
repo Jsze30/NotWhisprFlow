@@ -43,7 +43,11 @@ struct ConfigData: Codable {
 
 final class Config {
     static let shared = Config()
-    private(set) var data = ConfigData()
+    private(set) var data: ConfigData
+
+    init(data: ConfigData = ConfigData()) {
+        self.data = data
+    }
 
     var apiKey: String { data.apiKey }
     var deepgramApiKey: String { data.deepgramApiKey }

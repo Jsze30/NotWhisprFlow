@@ -8,6 +8,7 @@ let package = Package(
         .executableTarget(
             name: "WhisperFlow",
             path: "Sources/WhisperFlow"
-        )
+        ),
+        .testTarget(name: "WhisperFlowTests", dependencies: ["WhisperFlow"])
     ]
 )

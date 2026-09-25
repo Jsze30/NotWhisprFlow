@@ -1,8 +1,12 @@
 import AppKit
 
 enum Paster {
-    static func paste(_ text: String) {
-        let textToPaste = textEndsWithWhitespace(text) ? text : text + " "
+    static func paste(_ text: String, pressEnter: Bool = false) {
+        guard !text.isEmpty else {
+            if pressEnter { simulateEnter() }
+            return
+        }
+        let textToPaste = pressEnter || textEndsWithWhitespace(text) ? text : text + " "
         NSLog("[WhisperFlow] paste request len=%d preview=%@", textToPaste.count, String(textToPaste.prefix(60)))
         let pb = NSPasteboard.general
         let previous = pb.string(forType: .string)
@@ -15,6 +19,8 @@ enum Paster {
             simulateCmdV()
             NSLog("[WhisperFlow] Cmd+V posted")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                // Give the focused app time to consume the paste before submitting it.
+                if pressEnter { simulateEnter() }
                 if let previous {
                     pb.clearContents()
                     pb.setString(previous, forType: .string)
@@ -37,6 +43,17 @@ enum Paster {
         let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
         up?.flags = .maskCommand
 
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
+    private static func simulateEnter() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let returnKey: CGKeyCode = 0x24
+        let down = CGEvent(keyboardEventSource: source, virtualKey: returnKey, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: returnKey, keyDown: false)
+        down?.flags = []
+        up?.flags = []
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
     }

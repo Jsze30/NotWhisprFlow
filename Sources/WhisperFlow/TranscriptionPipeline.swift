@@ -14,16 +14,24 @@ enum PipelineError: Error, LocalizedError {
 }
 
 final class TranscriptionPipeline {
-    func process(wav: Data) async throws -> String {
+    private let session: URLSession
+    private let config: Config
+
+    init(session: URLSession = .shared, config: Config = .shared) {
+        self.session = session
+        self.config = config
+    }
+
+    func process(wav: Data) async throws -> DictationResult {
         let raw: String
-        if !Config.shared.deepgramApiKey.isEmpty {
+        if !config.deepgramApiKey.isEmpty {
             raw = try await transcribeDeepgram(wav: wav)
         } else {
             do {
-                raw = try await transcribe(wav: wav, model: Config.shared.data.transcriptionModel)
+                raw = try await transcribe(wav: wav, model: config.data.transcriptionModel)
             } catch {
                 NSLog("[WhisperFlow] transcribe with %@ failed: %@ — falling back to whisper-1",
-                      Config.shared.data.transcriptionModel, "\(error)")
+                      config.data.transcriptionModel, "\(error)")
                 raw = try await transcribe(wav: wav, model: "whisper-1")
             }
         }
@@ -31,17 +39,20 @@ final class TranscriptionPipeline {
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PipelineError.empty
         }
-        if Config.shared.data.enableCleanup && !Config.shared.apiKey.isEmpty {
+        var result = DictationResult(transcript: raw)
+        // A command-only dictation should press Enter without a paste or cleanup call.
+        guard !result.text.isEmpty else { return result }
+        if config.data.enableCleanup && !config.apiKey.isEmpty {
             do {
-                let cleaned = try await cleanup(text: raw)
+                let cleaned = try await cleanup(text: result.text)
                 NSLog("[WhisperFlow] cleaned: %@", cleaned)
-                return applyDictionaryReplacements(to: cleaned)
+                result.text = cleaned
             } catch {
-                NSLog("[WhisperFlow] cleanup failed: %@ — using raw text", "\(error)")
-                return applyDictionaryReplacements(to: raw)
+                NSLog("[WhisperFlow] cleanup failed: %@ - using raw text", "\(error)")
             }
         }
-        return applyDictionaryReplacements(to: raw)
+        result.text = applyDictionaryReplacements(to: result.text)
+        return result
     }
 
     // MARK: - Transcription
@@ -50,7 +61,7 @@ final class TranscriptionPipeline {
         let boundary = "----WhisperFlow\(UUID().uuidString)"
         var req = URLRequest(url: URL(string: "https://api.openai.com/v1/audio/transcriptions")!)
         req.httpMethod = "POST"
-        req.setValue("Bearer \(Config.shared.apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
@@ -72,7 +83,7 @@ final class TranscriptionPipeline {
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         req.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw PipelineError.http(code, String(data: data, encoding: .utf8) ?? "")
@@ -101,11 +112,11 @@ final class TranscriptionPipeline {
 
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "POST"
-        req.setValue("Token \(Config.shared.deepgramApiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("Token \(config.deepgramApiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         req.httpBody = wav
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw PipelineError.http(code, String(data: data, encoding: .utf8) ?? "")
@@ -132,7 +143,7 @@ final class TranscriptionPipeline {
     private func cleanup(text: String) async throws -> String {
         var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
         req.httpMethod = "POST"
-        req.setValue("Bearer \(Config.shared.apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let vocab = vocabularyTerms().joined(separator: ", ")
@@ -149,7 +160,7 @@ final class TranscriptionPipeline {
         """
 
         let payload: [String: Any] = [
-            "model": Config.shared.data.cleanupModel,
+            "model": config.data.cleanupModel,
             "temperature": 0,
             "messages": [
                 ["role": "system", "content": system],
@@ -158,7 +169,7 @@ final class TranscriptionPipeline {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw PipelineError.http(code, String(data: data, encoding: .utf8) ?? "")
@@ -184,11 +195,11 @@ final class TranscriptionPipeline {
             terms.append(trimmed)
         }
 
-        Config.shared.customVocabulary
+        config.customVocabulary
             .split(whereSeparator: { $0 == "," || $0 == "\n" })
             .forEach { add(String($0)) }
 
-        for rule in Config.shared.dictionaryReplacements {
+        for rule in config.dictionaryReplacements {
             add(rule.word)
             add(rule.replacement)
         }
@@ -197,7 +208,7 @@ final class TranscriptionPipeline {
     }
 
     private func replacementRulesDescription() -> String {
-        Config.shared.dictionaryReplacements
+        config.dictionaryReplacements
             .map { rule -> String? in
                 let word = rule.word.trimmingCharacters(in: .whitespacesAndNewlines)
                 let replacement = rule.replacement.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -210,7 +221,7 @@ final class TranscriptionPipeline {
 
     private func applyDictionaryReplacements(to text: String) -> String {
         var result = text
-        for rule in Config.shared.dictionaryReplacements {
+        for rule in config.dictionaryReplacements {
             let word = rule.word.trimmingCharacters(in: .whitespacesAndNewlines)
             let replacement = rule.replacement.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !word.isEmpty, !replacement.isEmpty else { continue }

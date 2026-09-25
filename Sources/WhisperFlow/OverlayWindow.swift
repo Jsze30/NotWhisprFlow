@@ -9,8 +9,8 @@ enum OverlayState {
 }
 
 final class OverlayWindow {
-    static let expandedSize = CGSize(width: 88, height: 30)
-    static let idleSize = CGSize(width: 32, height: 6)
+    static let expandedSize = CGSize(width: 79.2, height: 30)
+    static let idleSize = CGSize(width: 28.8, height: 6)
     private static let bottomOffset: CGFloat = 10
     /// How long the small pill rises before it starts expanding, so the growth happens
     /// after it has cleared the bottom edge rather than while still hidden below it.
@@ -180,7 +180,7 @@ final class OverlayWindow {
     }
 }
 
-private final class IndicatorView: NSView {
+final class IndicatorView: NSView {
     private let pillLayer = CALayer()
     private var barLayers: [CALayer] = []
     private var dotLayers: [CALayer] = []
@@ -199,7 +199,7 @@ private final class IndicatorView: NSView {
         layer?.masksToBounds = false
 
         pillLayer.backgroundColor = NSColor.black.cgColor
-        pillLayer.borderColor = NSColor.white.withAlphaComponent(0.75).cgColor
+        pillLayer.borderColor = NSColor.white.withAlphaComponent(0.5175).cgColor
         pillLayer.borderWidth = 1
         pillLayer.masksToBounds = true
         layer?.addSublayer(pillLayer)
@@ -226,23 +226,26 @@ private final class IndicatorView: NSView {
 
         stopAnimations()
         hideAllIndicators()
+        // Ignore startup levels while the pill opens. Otherwise a key/click or mic
+        // startup transient is already in the history when the bars appear, then
+        // travels left across the waveform for the next half second.
+        isRecording = false
 
         let target: CGSize
         let revealIndicators: () -> Void
         switch state {
         case .idle:
-            isRecording = false
             target = OverlayWindow.idleSize
             revealIndicators = {}
         case .recording:
-            isRecording = true
             target = OverlayWindow.expandedSize
             levelHistory = Array(repeating: 0.1, count: IndicatorView.barCount)
             revealIndicators = { [weak self] in
-                self?.barLayers.forEach { $0.isHidden = false }
+                guard let self else { return }
+                self.barLayers.forEach { $0.isHidden = false }
+                self.isRecording = true
             }
         case .transcribing:
-            isRecording = false
             target = OverlayWindow.expandedSize
             revealIndicators = { [weak self] in
                 guard let self else { return }
@@ -250,7 +253,6 @@ private final class IndicatorView: NSView {
                 self.startDotAnimation()
             }
         case .error:
-            isRecording = false
             target = OverlayWindow.expandedSize
             revealIndicators = { [weak self] in
                 self?.errorLayer?.isHidden = false
@@ -260,7 +262,12 @@ private final class IndicatorView: NSView {
         applyLevels(animated: false)
         layoutPill(size: target, animated: true) { [weak self] in
             guard let self, self.transitionID == currentTransitionID else { completion?(); return }
+            // Visibility must snap after the resize, just as it does when hiding.
+            // An implicit `hidden` animation can reveal indicators during the resize.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             revealIndicators()
+            CATransaction.commit()
             completion?()
         }
     }
@@ -323,8 +330,8 @@ private final class IndicatorView: NSView {
     private func buildBars() {
         for _ in 0..<IndicatorView.barCount {
             let l = CALayer()
-            l.backgroundColor = NSColor.white.cgColor
-            l.cornerRadius = 1.25
+            l.backgroundColor = NSColor(white: 0.8625, alpha: 1).cgColor
+            l.cornerRadius = 1.1
             l.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             l.isHidden = true
             pillLayer.addSublayer(l)
@@ -333,14 +340,14 @@ private final class IndicatorView: NSView {
     }
 
     private func layoutBars() {
-        let barWidth: CGFloat = 2.5
-        let spacing: CGFloat = 3
+        let barWidth: CGFloat = 2.2
+        let spacing: CGFloat = 2.5
         let count = CGFloat(barLayers.count)
         let totalWidth = count * barWidth + (count - 1) * spacing
         let pb = pillLayer.bounds
         let startX = (pb.width - totalWidth) / 2
         let midY = pb.height / 2
-        let h: CGFloat = max(pb.height - 2, 4)
+        let h: CGFloat = max(pb.height - 4, 4)
         for (i, bar) in barLayers.enumerated() {
             let x = startX + CGFloat(i) * (barWidth + spacing)
             bar.bounds = CGRect(x: 0, y: 0, width: barWidth, height: h)
