@@ -42,6 +42,7 @@ final class TranscriptionPipeline {
         var result = DictationResult(transcript: raw)
         // A command-only dictation should press Enter without a paste or cleanup call.
         guard !result.text.isEmpty else { return result }
+        result.text = SpokenListFormatter.format(result.text)
         if config.data.enableCleanup && !config.apiKey.isEmpty {
             do {
                 let cleaned = try await cleanup(text: result.text)
@@ -51,7 +52,7 @@ final class TranscriptionPipeline {
                 NSLog("[WhisperFlow] cleanup failed: %@ - using raw text", "\(error)")
             }
         }
-        result.text = applyDictionaryReplacements(to: result.text)
+        result.text = applyDictionaryReplacements(to: SpokenListFormatter.format(result.text))
         return result
     }
 
@@ -154,6 +155,8 @@ final class TranscriptionPipeline {
         You clean up speech-to-text output for dictation. Rules:
         - Fix grammar, punctuation, and capitalization.
         - Remove filler words: um, uh, like, you know, sort of, kind of.
+        - Preserve numbered lists with each item on its own line, using 1., 2., 3. prefixes.
+        - Keep introductory and closing prose in separate paragraphs around a numbered list.
         - Apply spoken formatting commands: "new paragraph" → \\n\\n, "new line" → \\n, "period" → ., "comma" → ,, "question mark" → ?, "exclamation point" → !.
         - Do NOT add content, opinions, or change meaning. Do NOT wrap in quotes.
         - Return only the cleaned text, nothing else.\(vocabLine)\(rulesLine)
