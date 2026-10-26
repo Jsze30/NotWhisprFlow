@@ -2,7 +2,7 @@ import AppKit
 import AVFoundation
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var hotkey: HotkeyManager!
     private var recorder: AudioRecorder!
@@ -11,8 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var dictionaryWindow: NSWindow?
     private var dictionaryController: DictionaryPanelController?
     private var hideModeItem: NSMenuItem?
-    private var copyLastItem: NSMenuItem?
-    private var lastDictation: String?
     private var isProcessing = false
     private var isRecording = false
     private let clicks: ClickPlayer? = {
@@ -87,11 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         hideItem.state = Config.shared.data.hideMode ? .on : .off
         menu.addItem(hideItem)
         hideModeItem = hideItem
-
-        let copyItem = NSMenuItem(title: "Copy Last Dictation", action: #selector(copyLastDictation), keyEquivalent: "")
-        copyItem.target = self
-        menu.addItem(copyItem)
-        copyLastItem = copyItem
 
         menu.addItem(.separator())
 
@@ -173,7 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                     NSLog("[WhisperFlow] ✅ transcript: %@", result.text)
                     await MainActor.run {
                         self.overlay.hide()
-                        if !result.text.isEmpty { self.lastDictation = result.text }
                         Paster.paste(result.text, pressEnter: result.pressEnter) { _ in
                             self.isProcessing = false
                         }
@@ -205,16 +197,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         overlay.setHideWhenIdle(newData.hideMode)
         hideModeItem?.state = newData.hideMode ? .on : .off
         NSLog("[WhisperFlow] hide mode %@", newData.hideMode ? "ON" : "OFF")
-    }
-
-    @objc private func copyLastDictation() {
-        guard let text = lastDictation else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        menuItem !== copyLastItem || lastDictation != nil
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
