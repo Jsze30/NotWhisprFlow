@@ -22,6 +22,10 @@ Requires Xcode command-line tools and macOS 13+.
 
 - **Hold Fn** to record. An overlay appears.
 - **Release** to transcribe + auto-paste into whatever app is focused.
+- Every dictation stays on the clipboard after the automatic paste attempt.
+  If it doesn't land in the right place, click a text box and press **Cmd+V**.
+  There is no recovery popup.
+  **Copy Last Dictation** in the menu bar also recovers the latest transcript until the app quits.
 - End your dictation with **"boom"** or **"press enter"** to omit the command and press Enter after pasting (for example, "See you soon. Boom.").
   Saying just "boom" or "press enter" presses Enter without pasting text.
 - Say "one buy milk, two call Mom, three walk the dog" to paste a numbered list with each item on its own line.
@@ -41,4 +45,4 @@ Stored at `~/Library/Application Support/WhisperFlow/config.json`. If `OPENAI_AP
 
 - No streaming partials yet (single request on release).
 - Fn only; not customizable via UI.
-- Restoring previous clipboard is best-effort (text only).
+- Paste confirmation depends on the destination app exposing its text through macOS Accessibility.

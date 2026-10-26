@@ -1,7 +1,8 @@
 import AppKit
 import AVFoundation
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem!
     private var hotkey: HotkeyManager!
     private var recorder: AudioRecorder!
@@ -10,6 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictionaryWindow: NSWindow?
     private var dictionaryController: DictionaryPanelController?
     private var hideModeItem: NSMenuItem?
+    private var copyLastItem: NSMenuItem?
+    private var lastDictation: String?
+    private var isProcessing = false
     private var isRecording = false
     private let clicks: ClickPlayer? = {
         let bundled = Bundle.main.url(forResource: "click", withExtension: "mp3")
@@ -84,6 +88,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(hideItem)
         hideModeItem = hideItem
 
+        let copyItem = NSMenuItem(title: "Copy Last Dictation", action: #selector(copyLastDictation), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+        copyLastItem = copyItem
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -127,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRecording() {
-        guard !isRecording else { return }
+        guard !isRecording, !isProcessing else { return }
         guard !Config.shared.apiKey.isEmpty || !Config.shared.deepgramApiKey.isEmpty else {
             NSLog("[WhisperFlow] ❌ no API key in config (need OpenAI or Deepgram)")
             NSSound.beep()
@@ -148,12 +157,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         guard isRecording else { return }
         isRecording = false
+        isProcessing = true
         overlay.show(state: .transcribing)
         recorder.stop { [weak self] wavData in
             guard let self else { return }
             guard let wavData, wavData.count > 4096 else {
                 NSLog("[WhisperFlow] ⚠️ audio too short")
-                DispatchQueue.main.async { self.overlay.hide() }
+                DispatchQueue.main.async { self.isProcessing = false; self.overlay.hide() }
                 return
             }
             NSLog("[WhisperFlow] 📡 sending %d bytes to OpenAI", wavData.count)
@@ -163,18 +173,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("[WhisperFlow] ✅ transcript: %@", result.text)
                     await MainActor.run {
                         self.overlay.hide()
-                        Paster.paste(result.text, pressEnter: result.pressEnter)
+                        if !result.text.isEmpty { self.lastDictation = result.text }
+                        Paster.paste(result.text, pressEnter: result.pressEnter) { _ in
+                            self.isProcessing = false
+                        }
                     }
                 } catch PipelineError.empty {
                     NSLog("[WhisperFlow] ⚠️ no speech transcribed")
                     await MainActor.run {
+                        self.isProcessing = false
                         self.overlay.hide()
                     }
                 } catch {
                     NSLog("[WhisperFlow] ❌ pipeline failed: %@", "\(error)")
                     await MainActor.run {
                         self.overlay.show(state: .error(error.localizedDescription))
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.overlay.hide() }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            self.isProcessing = false
+                            self.overlay.hide()
+                        }
                     }
                 }
             }
@@ -188,6 +205,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.setHideWhenIdle(newData.hideMode)
         hideModeItem?.state = newData.hideMode ? .on : .off
         NSLog("[WhisperFlow] hide mode %@", newData.hideMode ? "ON" : "OFF")
+    }
+
+    @objc private func copyLastDictation() {
+        guard let text = lastDictation else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem !== copyLastItem || lastDictation != nil
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
