@@ -54,8 +54,9 @@ enum Paster {
                 // Preserve normal paste behavior in those editors instead of
                 // treating missing accessibility data as a failed paste.
                 let accepted = confirmed || (destination.isTextInput && (before == nil || after == nil))
-                if pressEnter, accepted,
-                   destination.applicationID == environment.frontmostApplicationID() {
+                // Enter follows any paste that was sent. Many editors (Electron, web)
+                // report stale or no values, so confirmation must not gate Enter.
+                if pressEnter, destination.applicationID == environment.frontmostApplicationID() {
                     environment.postEnter()
                 }
                 completion(accepted)

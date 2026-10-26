@@ -51,7 +51,7 @@ final class PasterTests: XCTestCase {
         }
         XCTAssertTrue(completed)
         XCTAssertEqual(pasteCount, switchApp ? 0 : 1)
-        XCTAssertEqual(enterCount, expectedUnconfirmed ? 0 : 1)
+        XCTAssertEqual(enterCount, switchApp ? 0 : 1)
         XCTAssertEqual(pb.string(forType: .string), "Hello")
     }
 
