@@ -6,6 +6,8 @@ enum Paster {
         var applicationID: pid_t?
         var isTextInput: Bool
         var value: () -> String?
+        /// Text before the cursor, used to continue a sentence the user stopped midway.
+        var precedingText: () -> String? = { nil }
     }
 
     struct Environment {
@@ -27,8 +29,9 @@ enum Paster {
             completion(true)
             return
         }
-        let textToPaste = pressEnter || textEndsWithWhitespace(text) ? text : text + " "
         let destination = environment.destination()
+        let text = SentenceContinuation.adjust(text, after: destination.precedingText())
+        let textToPaste = pressEnter || textEndsWithWhitespace(text) ? text : text + " "
         let pb = environment.pasteboard
         // Keep the dictation available for manual Cmd+V even if automatic paste fails.
         pb.clearContents()
@@ -64,6 +67,14 @@ enum Paster {
         }
     }
 
+    /// Electron apps build their accessibility tree lazily. Ask for it while the
+    /// user is still speaking so the text before the cursor is readable at paste time.
+    static func prepareFrontmostApplication() {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
+        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid),
+                                     "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
+
     private static func currentDestination() -> Destination {
         let appID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let target = focusedElement() else {
@@ -74,7 +85,19 @@ enum Paster {
             || attribute(target, kAXSelectedTextRangeAttribute) != nil
             || attribute(target, "AXEditable") as? Bool == true
         return Destination(applicationID: appID, isTextInput: isTextInput,
-                           value: { attribute(target, kAXValueAttribute) as? String })
+                           value: { attribute(target, kAXValueAttribute) as? String },
+                           precedingText: { textBeforeCursor(in: target) })
+    }
+
+    private static func textBeforeCursor(in element: AXUIElement) -> String? {
+        guard let value = attribute(element, kAXValueAttribute) as? String,
+              let rangeValue = attribute(element, kAXSelectedTextRangeAttribute),
+              CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        let text = value as NSString
+        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range),
+              range.location >= 0, range.location <= text.length else { return nil }
+        return text.substring(to: range.location)
     }
 
     static func insertionConfirmed(before: String?, after: String?, text: String) -> Bool {

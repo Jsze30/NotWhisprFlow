@@ -54,6 +54,32 @@ final class Config {
     var customVocabulary: String { data.customVocabulary }
     var dictionaryReplacements: [DictionaryReplacement] { data.dictionaryReplacements }
 
+    /// Custom vocabulary plus both sides of every dictionary rule, deduplicated case-insensitively.
+    var vocabularyTerms: [String] {
+        var terms: [String] = []
+        var seen = Set<String>()
+
+        func add(_ value: String) {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            terms.append(trimmed)
+        }
+
+        customVocabulary
+            .split(whereSeparator: { $0 == "," || $0 == "\n" })
+            .forEach { add(String($0)) }
+
+        for rule in dictionaryReplacements {
+            add(rule.word)
+            add(rule.replacement)
+        }
+
+        return terms
+    }
+
     private var url: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("WhisperFlow", isDirectory: true)

@@ -137,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         isRecording = true
         overlay.show(state: .recording)
+        Paster.prepareFrontmostApplication()
         do {
             try recorder.start()
             NSLog("[WhisperFlow] 🎙 recording started")

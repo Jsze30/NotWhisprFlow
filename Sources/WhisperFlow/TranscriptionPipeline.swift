@@ -73,7 +73,7 @@ final class TranscriptionPipeline {
         }
         part("model", model)
         part("response_format", "json")
-        let vocab = vocabularyTerms().joined(separator: ", ")
+        let vocab = config.vocabularyTerms.joined(separator: ", ")
         if !vocab.isEmpty {
             part("prompt", vocab)
         }
@@ -106,7 +106,7 @@ final class TranscriptionPipeline {
             .init(name: "punctuate", value: "true"),
             .init(name: "filler_words", value: "false"),
         ]
-        for term in vocabularyTerms() {
+        for term in config.vocabularyTerms {
             items.append(.init(name: "keyterm", value: term))
         }
         comps.queryItems = items
@@ -147,7 +147,7 @@ final class TranscriptionPipeline {
         req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let vocab = vocabularyTerms().joined(separator: ", ")
+        let vocab = config.vocabularyTerms.joined(separator: ", ")
         let vocabLine = vocab.isEmpty ? "" : "\nPreserve these terms exactly when they appear: \(vocab)."
         let rules = replacementRulesDescription()
         let rulesLine = rules.isEmpty ? "" : "\nApply these dictionary replacements exactly: \(rules)."
@@ -183,31 +183,6 @@ final class TranscriptionPipeline {
         }
         let parsed = try JSONDecoder().decode(CR.self, from: data)
         return parsed.choices.first?.message.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? text
-    }
-
-    private func vocabularyTerms() -> [String] {
-        var terms: [String] = []
-        var seen = Set<String>()
-
-        func add(_ value: String) {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            let key = trimmed.lowercased()
-            guard !seen.contains(key) else { return }
-            seen.insert(key)
-            terms.append(trimmed)
-        }
-
-        config.customVocabulary
-            .split(whereSeparator: { $0 == "," || $0 == "\n" })
-            .forEach { add(String($0)) }
-
-        for rule in config.dictionaryReplacements {
-            add(rule.word)
-            add(rule.replacement)
-        }
-
-        return terms
     }
 
     private func replacementRulesDescription() -> String {
