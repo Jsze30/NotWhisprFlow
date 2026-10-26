@@ -3,6 +3,34 @@ import XCTest
 @testable import WhisperFlow
 
 final class PasterTests: XCTestCase {
+    func testPastePostedBeforeVerificationAndEnter() {
+        let pb = NSPasteboard.withUniqueName()
+        defer { pb.releaseGlobally() }
+        var scheduled: [() -> Void] = []
+        var events: [String] = []
+        var environment = Paster.Environment()
+        environment.pasteboard = pb
+        environment.destination = {
+            Paster.Destination(applicationID: 42, isTextInput: true, value: { nil })
+        }
+        environment.frontmostApplicationID = { 42 }
+        environment.schedule = { _, action in scheduled.append(action) }
+        environment.postPaste = { events.append("paste") }
+        environment.postEnter = { events.append("enter") }
+
+        Paster.paste("Hello", pressEnter: true, environment: environment,
+                     onPastePosted: { events.append("posted") }) { _ in
+            events.append("complete")
+        }
+        XCTAssertEqual(events, [])
+        XCTAssertEqual(scheduled.count, 1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(events, ["paste", "posted"])
+        XCTAssertEqual(scheduled.count, 1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(events, ["paste", "posted", "enter", "complete"])
+    }
+
     func testMissingAccessibilityStillPastesAndKeepsClipboard() {
         checkDelivery(isTextInput: false, before: nil, after: nil, expectedUnconfirmed: true)
     }
@@ -45,7 +73,8 @@ final class PasterTests: XCTestCase {
         }
         environment.postEnter = { enterCount += 1 }
         environment.schedule = { _, action in action() }
-        Paster.paste("Hello", pressEnter: true, environment: environment) { accepted in
+        Paster.paste("Hello", pressEnter: true, environment: environment,
+                     onPastePosted: { XCTAssertFalse(switchApp) }) { accepted in
             XCTAssertEqual(!accepted, expectedUnconfirmed)
             completed = true
         }

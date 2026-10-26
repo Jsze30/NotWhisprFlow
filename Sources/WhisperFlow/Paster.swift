@@ -23,6 +23,7 @@ enum Paster {
 
     static func paste(_ text: String, pressEnter: Bool = false,
                       environment: Environment = Environment(),
+                      onPastePosted: @escaping () -> Void = {},
                       completion: @escaping (Bool) -> Void = { _ in }) {
         guard !text.isEmpty else {
             if pressEnter { environment.postEnter() }
@@ -50,6 +51,7 @@ enum Paster {
             }
             let before = destination.value()
             environment.postPaste()
+            onPastePosted()
             environment.schedule(0.4) {
                 let after = destination.value()
                 let confirmed = insertionConfirmed(before: before, after: after, text: text)

@@ -11,8 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictionaryWindow: NSWindow?
     private var dictionaryController: DictionaryPanelController?
     private var hideModeItem: NSMenuItem?
-    private var isProcessing = false
     private var isRecording = false
+    /// Dictations whose paste has not yet been sent (excludes paste verification).
+    private var pendingDictations = 0
+    private var lastDelivery: Task<Void, Never>?
+    /// Set for 2s after a failed dictation so the pill shows its red error dot.
+    private var errorMessage: String?
+    private var errorToken = 0
     private let clicks: ClickPlayer? = {
         let bundled = Bundle.main.url(forResource: "click", withExtension: "mp3")
         let source = URL(fileURLWithPath: "Resources/click.mp3", relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
@@ -129,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRecording() {
-        guard !isRecording, !isProcessing else { return }
+        guard !isRecording else { return }
         guard !Config.shared.apiKey.isEmpty || !Config.shared.deepgramApiKey.isEmpty else {
             NSLog("[WhisperFlow] ❌ no API key in config (need OpenAI or Deepgram)")
             NSSound.beep()
@@ -143,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[WhisperFlow] 🎙 recording started")
         } catch {
             isRecording = false
-            overlay.hide()
+            refreshOverlay()
             NSLog("[WhisperFlow] ❌ recorder start failed: \(error)")
         }
     }
@@ -151,43 +156,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         guard isRecording else { return }
         isRecording = false
-        isProcessing = true
-        overlay.show(state: .transcribing)
-        recorder.stop { [weak self] wavData in
-            guard let self else { return }
-            guard let wavData, wavData.count > 4096 else {
-                NSLog("[WhisperFlow] ⚠️ audio too short")
-                DispatchQueue.main.async { self.isProcessing = false; self.overlay.hide() }
-                return
+        pendingDictations += 1
+        refreshOverlay()
+        let wav = recorder.stop()
+        let pipeline = self.pipeline!
+        let transcription = Task.detached { () -> Result<DictationResult, Error>? in
+            guard wav.count > 4096 else { return nil }
+            NSLog("[WhisperFlow] 📡 sending %d bytes to OpenAI", wav.count)
+            do { return .success(try await pipeline.process(wav: wav)) } catch { return .failure(error) }
+        }
+        // Earlier dictations may still be transcribing. Chain each paste behind the
+        // previous one so text lands in the order it was spoken.
+        let previous = lastDelivery
+        lastDelivery = Task {
+            await previous?.value
+            var finishedDisplaying = false
+            let finishDisplaying = {
+                guard !finishedDisplaying else { return }
+                finishedDisplaying = true
+                self.pendingDictations -= 1
+                self.refreshOverlay()
             }
-            NSLog("[WhisperFlow] 📡 sending %d bytes to OpenAI", wavData.count)
-            Task {
-                do {
-                    let result = try await self.pipeline.process(wav: wavData)
-                    NSLog("[WhisperFlow] ✅ transcript: %@", result.text)
-                    await MainActor.run {
-                        self.overlay.hide()
-                        Paster.paste(result.text, pressEnter: result.pressEnter) { _ in
-                            self.isProcessing = false
-                        }
-                    }
-                } catch PipelineError.empty {
-                    NSLog("[WhisperFlow] ⚠️ no speech transcribed")
-                    await MainActor.run {
-                        self.isProcessing = false
-                        self.overlay.hide()
-                    }
-                } catch {
-                    NSLog("[WhisperFlow] ❌ pipeline failed: %@", "\(error)")
-                    await MainActor.run {
-                        self.overlay.show(state: .error(error.localizedDescription))
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            self.isProcessing = false
-                            self.overlay.hide()
-                        }
-                    }
-                }
+            await deliver(await transcription.value, onPastePosted: finishDisplaying)
+            // Errors, empty transcripts, and canceled pastes never post Cmd+V.
+            finishDisplaying()
+        }
+    }
+
+    private func deliver(_ outcome: Result<DictationResult, Error>?,
+                         onPastePosted: @escaping () -> Void) async {
+        switch outcome {
+        case nil:
+            NSLog("[WhisperFlow] ⚠️ audio too short")
+        case .success(let result):
+            NSLog("[WhisperFlow] ✅ transcript: %@", result.text)
+            await withCheckedContinuation { cont in
+                Paster.paste(result.text, pressEnter: result.pressEnter,
+                             onPastePosted: onPastePosted) { _ in cont.resume() }
             }
+        case .failure(PipelineError.empty):
+            NSLog("[WhisperFlow] ⚠️ no speech transcribed")
+        case .failure(let error):
+            NSLog("[WhisperFlow] ❌ pipeline failed: %@", "\(error)")
+            errorToken += 1
+            let token = errorToken
+            errorMessage = error.localizedDescription
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard self.errorToken == token else { return }
+                self.errorMessage = nil
+                self.refreshOverlay()
+            }
+        }
+    }
+
+    /// The pill reflects the newest activity: recording wins, then any dictation still in flight.
+    private func refreshOverlay() {
+        if isRecording {
+            overlay.show(state: .recording)
+        } else if pendingDictations > 0 {
+            overlay.show(state: .transcribing)
+        } else if let errorMessage {
+            overlay.show(state: .error(errorMessage))
+        } else {
+            overlay.hide()
         }
     }
 

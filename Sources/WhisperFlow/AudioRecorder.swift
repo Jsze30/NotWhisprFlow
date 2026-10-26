@@ -11,6 +11,9 @@ final class AudioRecorder {
     private var converter: AVAudioConverter?
     private var targetFormat: AVAudioFormat!
     private let queue = DispatchQueue(label: "whisperflow.recorder")
+    /// Bumped on every start and stop (on `queue`) so audio from an earlier
+    /// recording can never leak into the next one when Fn is pressed again quickly.
+    private var session = 0
 
     init() {
         targetFormat = AVAudioFormat(
@@ -22,30 +25,36 @@ final class AudioRecorder {
     }
 
     func start() throws {
-        pcmAccumulator.removeAll(keepingCapacity: true)
+        let id = queue.sync { () -> Int in
+            session += 1
+            pcmAccumulator.removeAll(keepingCapacity: true)
+            return session
+        }
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         converter = AVAudioConverter(from: inputFormat, to: targetFormat)
 
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-            self?.process(buffer: buffer, inputFormat: inputFormat)
+            self?.process(buffer: buffer, inputFormat: inputFormat, session: id)
         }
         engine.prepare()
         try engine.start()
     }
 
-    func stop(completion: @escaping (Data?) -> Void) {
+    /// Stops capture and returns the recording as WAV, ready for the next `start` immediately.
+    func stop() -> Data {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        queue.async { [weak self] in
-            guard let self else { completion(nil); return }
-            let wav = Self.wrapInWavHeader(pcm: self.pcmAccumulator, sampleRate: Int(self.targetSampleRate))
-            completion(wav)
+        let pcm = queue.sync { () -> Data in
+            session += 1
+            defer { pcmAccumulator.removeAll(keepingCapacity: true) }
+            return pcmAccumulator
         }
+        return Self.wrapInWavHeader(pcm: pcm, sampleRate: Int(targetSampleRate))
     }
 
-    private func process(buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
+    private func process(buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat, session id: Int) {
         guard let converter else { return }
         let ratio = targetSampleRate / inputFormat.sampleRate
         let outFrames = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1024)
@@ -66,7 +75,8 @@ final class AudioRecorder {
         let byteCount = frameCount * MemoryLayout<Int16>.size
         let bytes = Data(bytes: channelData[0], count: byteCount)
         queue.async { [weak self] in
-            self?.pcmAccumulator.append(bytes)
+            guard let self, self.session == id else { return }
+            self.pcmAccumulator.append(bytes)
         }
 
         var peak: Int32 = 0
